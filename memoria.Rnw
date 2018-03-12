@@ -1,0 +1,315 @@
+%%Memoria creada para la asignatura de 'extracción del conocimiento automatizado'
+%%En la universidad de 'Alcalá de Henares'
+\documentclass{article}
+\usepackage[strings]{underscore}
+\usepackage[sc]{mathpazo}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\usepackage{listings}
+\geometry{verbose,tmargin=2.5cm,bmargin=2.5cm,lmargin=2.5cm,rmargin=2.5cm}
+\setcounter{secnumdepth}{2}
+\setcounter{tocdepth}{2}
+\usepackage{url}
+\usepackage[unicode=true,pdfusetitle,
+ bookmarks=true,bookmarksnumbered=true,bookmarksopen=true,bookmarksopenlevel=2,
+ breaklinks=false,pdfborder={0 0 1},backref=false,colorlinks=false]
+ {hyperref}
+\hypersetup{
+ pdfstartview={XYZ null null 1}}
+\usepackage{breakurl}
+\begin{document}
+<<setup, include=FALSE, cache=FALSE>>=
+library(arules)
+
+library(arulesViz)
+library(knitr)
+# set global chunk options
+opts_chunk$set(fig.path='figure/minimal-', fig.align='center', fig.show='hold')
+options(formatR.arrow=TRUE,width=90)
+@
+
+\title{\textbf{\huge Extracción Automática del Conocimiento R-PL2}}
+\author{Zamar Elahi Fazal Roura}
+
+\maketitle
+
+\section{Análisis asociación estudiantes}
+\subsection{Ejercicio con dataset Kaggle}
+Desarrollo un ejercicio en el que se realice un análisis con R de asociación.
+\subsubsection{Obtención de los datos}
+UsaMOS el fichero \textbf{student-por.csv} que hemos encontrado en Kaggle \cite{kaggle}. Es un dataset que representa 
+un estudio sobre los alumnos de una escuela de secundaria, contiene datos interesantes de temática social, de género y relacionada con los estudios. 
+Como el dataset es muy grande, hemos decidido acotarlo en número de filas, ademáss de elegir solo unas cuantas columnas.
+La descripción de los datos se encuentra en \url{https://www.kaggle.com/uciml/student-alcohol-consumption}.
+
+Usaremos 'arulesViz' \cite{arulesViz}, un paquete de R que proporciona funciones gráficas al paquete 'arules'
+
+<<boring-random>>=
+dat = read.csv("data/student-por.csv")
+@
+<<size='footnotesize'>>=
+summary(dat)
+@
+\subsubsection{Objetivo}
+Queremos realizar un análisis de asociación para investigar que hechos ocurren en común entre un 
+grupo de estudiantes. Realizaremos el análisis también para solo las mujeres estudiantes. 
+
+También estudiaremos la visualización del concepto de soporte y el comportamiento del "mineo" de reglas de asociación. Para ello trataremos 3 conjuntos:
+\begin{itemize}
+    \item {Estudiantes (sin diferenciar sexo)}
+    \item Estudiantes (diferenciando sexo).
+    \item Mujeres Estudiantes (subconjunto de estudiantes).
+\end{itemize}
+
+Por último veremos que soporte y confianza tienen las reglas que indican que \textit{los estudiantes beben mucho alcohol los fines de semana}
+\subsubsection{Limpieza de datos}
+
+\textbf{Cambiamos las variables nominales para que tengan significado.}
+<<>>= 
+head(dat$health,n=10)
+@
+Transformamos:
+<<size='small'>>=
+#Escogemos las columnas que queremos pasar a "mine"
+mine <- dat[,c("Walc","Dalc","failures","health","Pstatus")]
+mine$Walc <- factor(mine$Walc, labels = c("very low", "low","normal","high","very high"))
+mine$Dalc <- factor(mine$Dalc, labels = c("very low", "low","normal","high","very high"))
+mine$failures <- factor(mine$failures, labels = c("cero", "uno","dos","tres"))
+mine$health <- factor(mine$health, labels = c("very bad","bad","normal","good","very good"))
+mine$Pstatus <- factor(mine$Pstatus, labels = c("apart","living together"))
+@
+Resultado:
+<<>>=
+head(mine$health, n=10)
+@
+\textbf{Cambiamos las variables binarias para que tengan significado.}
+<<>>=
+summary(dat$sex)
+@
+Transformamos:
+<<>>=
+mine$male <- dat$sex == "M"
+mine$female <-dat$sex =="F"
+mine$notRomantic <- dat$romantic == "no"
+mine$romantic <-dat$romantic =="yes"
+@
+Resultado:
+<<>>=
+summary(mine$female)
+@
+Para estudiar a los alumnos como estudiantes sin tener en cuenta el 
+género, creamos una tabla donde no guardamos la columna.
+<<>>=
+students <- mine
+students$female <- NULL
+students$male <- NULL
+@
+Todas las variables que no introducimos son eliminadas. Comprobamos el resumen de los datos \textbf {limpios}
+<<>>=
+summary(mine)
+@
+
+
+\subsubsection{Entender el contexto}
+\textbf{Número de estudiantes}
+<<sex-plot, fig.width=4,fig.height=5,small='SCRIPTSIZE'>>=
+tbl <- table(factor(dat$sex, labels = c("Mujer","Hombre")))
+ylim <- c(0, 1.1*max(table(dat$sex)))
+xx <- barplot(
+    tbl,ylab="Numero de hombres y mujeres",ylim=ylim,main=paste(
+        nrow(dat),"estudiantes",sep=" "))
+text(x=xx,y=table(dat$sex),label=table(dat$sex), pos = 3, col="blue")
+@ 
+\textbf{Frecuencia de beber alcohol el fin de semana}
+<<alcohol-plot,fig.width=4,fig.height=5,size='small'>>=
+tbl <- table(mine$Walc)
+ylim <- c(0, 1.1*max(table(mine$Walc)))
+xx <- barplot(tbl,ylab="Frecuencia de nivel de consumición",ylim=ylim,main="Alcohol el fin de semana")
+text(x=xx,y=table(mine$Walc),label=table(mine$Walc), pos = 3, col="blue")
+@
+Podemos observar que la moda (\Sexpr{max(table(mine$Walc))}) es beber muy poco alcohol. Esta frecuencia tan alta
+nos da una pista sobre cómo el mayor soporte (entre reglas de alcohol) va a estar en reglas donde casi no se bebe alcohol entre semana.
+\subsubsection{Tratamiento de datos}
+En los apartados anteriores hemos discretizado la información, esto es, separar los datos convirtiendolos en únicos y distintos.
+De esta manera podemos transformar nuestros data frames a transacciones, en la cual se guarda nuestra información en una matriz de
+incidencias binaria (TRUE O FALSE)
+<<>>=
+#Tratar como estudiantes
+trans_students <- as(students,"transactions")
+#Diferenciamos género, en el objetivo hemos especificado que estudiamos el femenino.
+trans <- as(mine,"transactions")
+#Subconjunto
+trans_female <- subset(trans, items %in% "female")
+@   
+Por un lado guardamos a los estudiantes, en otro separamos por hombre y mujer (mine) 
+y en el otro solo las mujeres.
+<<size='small'>>= 
+summary(trans)
+@
+En el "summary" de la transacción de mujeres debería haber solo \Sexpr{sum(mine$female, na.rm=TRUE)} filas.
+<<size='small'>>= 
+summary(trans_female)
+@
+En la primera gráfica vemos la frecuencia de "aparición" de los hechos en la transacción, en la segunda gráfica la frecuencia de aparición de 
+hechos para las mujeres. 
+<<Freq-plot,fig.width=8,fig.height=6>>=
+itemLabels(trans)
+itemFrequencyPlot(trans,topN = 30,cex.names=.5)
+itemFrequencyPlot(trans_female,population=trans,topN = 30,cex.names=.5)
+@
+En la ultima gráfica la linea da el valor de la frecuencia del "item" en el conjunto total (Lo que llamamos población en la función)
+\subsubsection{Análisis de Asociación}
+Con el objetivo claro, los datos estructurados, limpios y tratados comenzamos a realizar el "mineo" para sacar los hechos frecuentes.
+<<results='hide',size='small'>>=
+total_rules_students<-apriori(trans_students)
+total_rules <- apriori(trans)
+#Ya sabemos que todo son mujeres, sacamos a las mujeres.
+total_rules_female <- apriori(trans_female, appearance =list(none=c("female")))
+@
+\textit{<<results='hide'>>= para ocultar los resultados pero dejar las funciones.}
+<<rules-plot,fig.width=3,fig.height=3,size='small'>>=
+plot(total_rules_students,shading='support',control=list(main = paste(length(total_rules_students),"reglas para estudiantes",sep=" "),cex=0.8))
+plot(total_rules,shading='support',control=list(main = paste(length(total_rules),"reglas hombres y mujeres",sep=" ")))
+plot(total_rules_female,shading='support',control=list(main = paste(length(total_rules_female),"reglas para mujeres",sep=" "),cex=0.8))
+@
+Aquí podemos visualizar el número de reglas que salen con el mismo soporte y confianza para estudiantes, hombres y mujeres, 
+y sólo para las mujeres.
+
+
+Comparando \textbf{estudiantes} y \textbf{estudiantes diferenciados por sexo} observamos que hay menos reglas para el primero pero
+las reglas que comparten entre uno y otro tienen el mismo soporte y confianza. Esto es debido a que hay el \textbf{mismo número de sucesos} para 
+cada uno.La única diferencia es que en los sucesos en los que diferenciamos hombre y mujer existirá un elemento más dentro del suceso. En un carrito de comidas
+donde hay [Pan, Leche] también incluiriamos quién ha comprado el carrito, esto es, [Pan,Leche,Mujer] .Y como hemos incluido dos nuevos sucesos elementales en nuestro espacio 
+muestral saldrán más reglas.
+
+Comparando \textbf{estudiantes (diferenciados por sexo)} y \textbf{Subconjunto de estudiantes que son mujer}sabemos que el número de sucesos que existe dentro del subconjunto de mujeres es menor que el total de estudiantes [\Sexpr{nrow(trans_female)} < \Sexpr{nrow(trans)}].
+El soporte ahora se calcula para un número menor de sucesos y saldrá un soporte acorde para el comportamiento dentro de las mujeres.
+Si no excluyeramos a [female] dentro de las reglas de asociación saldrían muchas reglas con confianza 1 ya que los hechos que pasan el soporte nos indican que somos una mujer, por eso lo hemos excluido.
+
+\bigskip
+
+\textit{Curiosidades:}
+
+\textit{Si en la función de plot escribimos como argumento (engine='interactive') podemos movernos a traves de las reglas por regiones 
+y ver cuales son haciendo doble click y aprentando el botón "inspect"}
+
+\textit{Por defecto el color de los puntos es dado por "lift", para nuestro entendimiento hemos cambiado el coloreo por nivel de soporte con shading='support'}
+
+\subsubsection{Estudiantes}
+Este es el caso en el que no diferenciamos hombres y mujeres, dividimos estos casos para que se aprecie  
+Creamos una función donde establecemos el soporte y confianza deseados (0.6 y 0.8 respectivamente)
+<<>>=
+apriori_p <- function (x){
+    apriori(x,parameter=list(supp=0.6,conf=0.8))
+}
+@
+Observamos que reglas salen con los umbrales establecidos.
+<<estudiantes_reglas_plot,results='hide',fig.width=5,fig.height=3>>=
+rules_selection_students <- apriori_p(trans_students)
+plot(rules_selection_students,shading='support')
+@
+<<size='small'>>=
+inspect(rules_selection_students)
+@
+Con estos umbrales podemos decir, siempre que:
+\begin{itemize}
+\item {Se bebe muy poco alcohol entre semana se aprueba todo}
+\item {Si apruebas todo tus padres están juntos}
+\item {Si tus padres están juntos apruebas todo}
+\end{itemize}
+
+\subsubsection{Hombres y Mujeres}
+Observamos que reglas salen con los umbrales establecidos.
+<<ambos_reglas_plot,results='hide',fig.width=5,fig.height=3>>=
+rules_selection <- apriori_p(trans)
+plot(rules_selection,shading='support')
+@
+<<size='small'>>=
+inspect(rules_selection)
+@
+
+Corroboramos lo que hemos mencionado anteriormente, las reglas que comparten ambos conjuntos (En este caso las mismas pasan el umbral) tienen el 
+mismo soporte y confianza.
+\subsubsection{Mujeres}
+Dentro de las reglas de mujeres aparecerá el suceso elemental [Female] en todos los casos, por lo tanto no queremos que se muestren las reglas que indiquen 
+si X => [Female].
+<<reglas_female_plot,results='hide',fig.width=5,fig.height=3,size='scriptsize'>>=
+#Apriori distinto ya que no puede aparecer female en las reglas, ya sabemos que son todo mujeres.
+rules_selection_female <- apriori(trans_female,parameter=list(supp=0.6,conf=0.8),appearance =list(none=c("female")))
+plot(rules_selection_female,shading='support')
+@
+<<size='small',tidy=TRUE>>=
+inspect(rules_selection_female)
+@
+
+\begin{itemize}
+\item {Si bebe muy poco alcohol entre semana se aprueba todo y viceversa}
+\item {Si bebe muy poco alcohol entre semana sus padres están juntos}
+\item {Si apruebas todo tus padres están juntos y viceversa}
+\end{itemize}
+
+\subsubsection{Observar reglas específicas}
+Por último queremos ver que soporte y confianza tienen las reglas de asociación que indican que los estudiantes beben mucho alcohol
+los fines de semana. 
+
+Usaremos el conjunto de estudiantes sin diferenciar sexo.
+
+<<results='hide'>>=
+all_rules_students <- apriori(trans_students, parameter=list(support=0.01))
+rules_alcohol_subset <- subset(all_rules_students, items %in% "Walc=very high")
+@
+<<size='small'>>=
+inspect(head(sort(rules_alcohol_subset,by="support"),n=10))
+@
+
+Podemos cuales son las reglas con mayor soporte para que se cumpla este hecho, sin embargo el soporte es demasiado bajo para que lo contemplemos.
+
+Aún así, hemos visto otra forma interesante de observar reglas, atacando la regla específica que nos interesa.
+\subsection{Anexo}
+\subsubsection{Mini-Chunk}
+Si queremos escribir código que esté incluido como texto y no como bloque usamos:
+\begin{lstlisting}
+\Sexpr {'Codigo a incluir'}
+Por lo tanto si queremos calcular la media del vector [2,3]:
+La media del vector es Sexpr{mean(c(2,3))}. #\Sexpr
+\end{lstlisting}
+Ejecución:
+
+La media del vector es \Sexpr{mean(c(2,3))}.
+\subsubsection{Knitr}
+Knitr es un paquete de R \cite{knitr} que añade opciones de presentación a Sweave.
+Nos permite entre otras cosas:
+\begin {itemize}
+\item {Colorear el código dentro de los chunks}
+\item {Cambiar el tamaño de la fuente dentro del chunk}
+\item {Cambiar los margenes en los chunks para crear saltos de línea}
+\item {No mostrar warnings de R}
+\item {Manejar el tamaño de las figuras}
+\end{itemize}
+Toda la información de las nuevas opciones se encuentran en : \url{https://yihui.name/knitr/options/}
+
+
+\begin{thebibliography}{9}
+    \bibitem{arules}
+        Package 'arules'
+        \textit{https://cran.r-project.org/web/packages/arules/arules.pdf},
+        Michael Hahsler
+    \bibitem{kaggle}
+      Student Alcohol Consumption,
+      \textit{https://www.kaggle.com/uciml/student-alcohol-consumption},
+      Kaggle.
+      \bibitem{arulesViz}
+        Package 'arulesViz'
+        \textit{ https://cran.r-project.org/web/packages/arulesViz/vignettes/arulesViz.pdf},
+        Michael Hahsler 
+      \bibitem{michael}
+      arules: Association Rule Mining with R -- A Tutorial.
+      \textit{http://michael.hahsler.net/research/arules_RUG_2015/demo/},
+      Michael Hahsler
+      \bibitem{knitr}
+      Package 'knitr'
+      \textit{https://cran.r-project.org/web/packages/knitr/knitr.pdf},
+      Yihui Xie
+     
+\end{thebibliography}
+\end{document}
